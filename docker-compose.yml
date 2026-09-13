@@ -1,0 +1,20 @@
+services:
+  # 静态 Web：默认宿主 8080 端口，可用 WEB_PORT 覆盖，例如 WEB_PORT=9000 docker compose up -d
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: double-entry-web:latest
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    restart: unless-stopped
+
+  # 一次性验收：docker compose run --rm verify
+  # 运行 Vitest 单测与 Playwright 端到端测试，任一失败即以非零码退出。
+  verify:
+    build:
+      context: .
+      dockerfile: Dockerfile.verify
+    image: double-entry-verify:latest
+    command: ["sh", "-c", "npm run test:unit && npx playwright test"]
+    restart: "no"

@@ -1,0 +1,19 @@
+# 一次性验收服务镜像：预装 Playwright 浏览器的官方基础镜像，
+# 标签与 package.json 中 @playwright/test 版本保持一致。
+FROM mcr.microsoft.com/playwright:v1.63.0-jammy
+
+WORKDIR /app
+
+# 基础镜像的日常运行用户是 pwuser，确保工作目录对其可写。
+USER root
+RUN chown pwuser:pwuser /app
+USER pwuser
+
+COPY --chown=pwuser:pwuser package*.json ./
+RUN npm ci
+
+COPY --chown=pwuser:pwuser . .
+RUN npm run build
+
+# verify 服务在 docker-compose.yml 中覆盖为：单测 + E2E 串行执行
+CMD ["sh", "-c", "npm run test:unit && npx playwright test"]
