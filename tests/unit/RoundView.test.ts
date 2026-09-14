@@ -15,6 +15,22 @@ function press(wrapper: VueWrapper, key: string) {
   return wrapper.find('section.round').trigger('keydown', { key })
 }
 
+function pressWith(
+  wrapper: VueWrapper,
+  key: string,
+  modifiers: { ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean }
+) {
+  return wrapper.find('section.round').trigger('keydown', { key, ...modifiers })
+}
+
+async function undoByKey(wrapper: VueWrapper) {
+  await pressWith(wrapper, 'z', { ctrlKey: true })
+}
+
+async function redoByKey(wrapper: VueWrapper, key: string, shiftKey = true) {
+  await pressWith(wrapper, key, { ctrlKey: true, shiftKey })
+}
+
 async function answerAll(wrapper: VueWrapper, value: Option) {
   for (let i = 0; i < 20; i++) {
     await press(wrapper, value)
@@ -214,5 +230,180 @@ describe('RoundView 批量填入', () => {
 
     expect(wrapper.findAll('.option--selected')).toHaveLength(0)
     expect(wrapper.findAll('.question--current')[0].attributes('data-testid')).toBe('question-1')
+  })
+})
+
+describe('RoundView 撤销 / 重做', () => {
+  it('初始撤销、重做按钮均禁用', async () => {
+    const wrapper = mountRound()
+    expect(wrapper.find('[data-testid="undo"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-testid="redo"]').attributes('disabled')).toBeDefined()
+  })
+
+  it('误触后鼠标撤销恢复答案与焦点，重做再恢复', async () => {
+    const wrapper = mountRound()
+    // 第 1 题误选 A，焦点自动到第 2 题
+    await wrapper.find('[data-testid="q1-A"]').trigger('click')
+    expect(wrapper.find('[data-testid="q1-A"]').classes()).toContain('option--selected')
+    expect(wrapper.find('.question--current').attributes('data-testid')).toBe('question-2')
+    expect(wrapper.find('[data-testid="undo"]').attributes('disabled')).toBeUndefined()
+
+    // 鼠标撤销：答案还原为空，焦点回到第 1 题，重做变为可用
+    await wrapper.find('[data-testid="undo"]').trigger('click')
+    expect(wrapper.find('[data-testid="q1-A"]').classes()).not.toContain('option--selected')
+    expect(wrapper.find('.question--current').attributes('data-testid')).toBe('question-1')
+    expect(wrapper.find('[data-testid="undo"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-testid="redo"]').attributes('disabled')).toBeUndefined()
+
+    // 鼠标重做：答案与焦点都回到操作后的状态
+    await wrapper.find('[data-testid="redo"]').trigger('click')
+    expect(wrapper.find('[data-testid="q1-A"]').classes()).toContain('option--selected')
+    expect(wrapper.find('.question--current').attributes('data-testid')).toBe('question-2')
+    expect(wrapper.find('[data-testid="redo"]').attributes('disabled')).toBeDefined()
+  })
+
+  it('Ctrl/Cmd+Z 撤销、Ctrl/Cmd+Shift+Z 重做，与按钮行为一致', async () => {
+    const wrapper = mountRound()
+    await press(wrapper, 'B') // 第 1 题 B，焦点到第 2 题
+    await undoByKey(wrapper)
+    expect(wrapper.find('[data-testid="q1-B"]').classes()).not.toContain('option--selected')
+    expect(wrapper.find('.question--current').attributes('data-testid')).toBe('question-1')
+
+    await redoByKey(wrapper, 'Z') // 大写 Z 同样识别
+    expect(wrapper.find('[data-testid="q1-B"]').classes()).toContain('option--selected')
+    expect(wrapper.find('.question--current').attributes('data-testid')).toBe('question-2')
+
+    // Meta 键（Cmd）与 shift 组合的重做同样可用
+    await pressWith(wrapper, 'z', { metaKey: true })
+    expect(wrapper.find('[data-testid="q1-B"]').classes()).not.toContain('option--selected')
+    await pressWith(wrapper, 'z', { metaKey: true, shiftKey: true })
+    expect(wrapper.find('[data-testid="q1-B"]').classes()).toContain('option--selected')
+  })
+
+  it('连续撤销按逆序恢复答案与焦点，连续重做按原序恢复', async () => {
+    const wrapper = mountRound()
+    await press(wrapper, 'A') // 1=A, 焦点 2
+    await press(wrapper, 'B') // 2=B, 焦点 3
+    await press(wrapper, 'C') // 3=C, 焦点 4
+
+    await undoByKey(wrapper)
+    expect(wrapper.find('[data-testid="q3-C"]').classes()).not.toContain('option--selected')
+    expect(wrapper.find('.question--current').attributes('data-testid')).toBe('question-3')
+    await undoByKey(wrapper)
+    expect(wrapper.find('[data-testid="q2-B"]').classes()).not.toContain('option--selected')
+    expect(wrapper.find('.question--current').attributes('data-testid')).toBe('question-2')
+    await undoByKey(wrapper)
+    expect(wrapper.find('[data-testid="q1-A"]').classes()).not.toContain('option--selected')
+    expect(wrapper.findAll('.option--selected')).toHaveLength(0)
+    expect(wrapper.find('.question--current').attributes('data-testid')).toBe('question-1')
+
+    await redoByKey(wrapper, 'Z')
+    expect(wrapper.find('[data-testid="q1-A"]').classes()).toContain('option--selected')
+    expect(wrapper.find('.question--current').attributes('data-testid')).toBe('question-2')
+    await redoByKey(wrapper, 'Z')
+    expect(wrapper.find('[data-testid="q2-B"]').classes()).toContain('option--selected')
+    expect(wrapper.find('.question--current').attributes('data-testid')).toBe('question-3')
+    await redoByKey(wrapper, 'Z')
+    expect(wrapper.find('[data-testid="q3-C"]').classes()).toContain('option--selected')
+    expect(wrapper.find('.question--current').attributes('data-testid')).toBe('question-4')
+  })
+
+  it('重复选择同一选项不进入轨迹，被忽略按键也不留痕', async () => {
+    const wrapper = mountRound()
+    await wrapper.find('[data-testid="q1-A"]').trigger('click')
+    await undoByKey(wrapper) // 轨迹清空，焦点回到第 1 题
+    // 在同一题上重复点选 A：仅第一次是有效变化，重复选择不产生记录
+    await wrapper.find('[data-testid="q1-A"]').trigger('click')
+    await wrapper.find('[data-testid="q1-A"]').trigger('click')
+    await press(wrapper, 'x')
+    await press(wrapper, '1')
+    expect(wrapper.find('[data-testid="q1-A"]').classes()).toContain('option--selected')
+    expect(wrapper.findAll('.option--selected')).toHaveLength(1)
+
+    // 一次撤销即可清空全部，说明重复选择与无效按键均未留痕
+    await undoByKey(wrapper)
+    expect(wrapper.findAll('.option--selected')).toHaveLength(0)
+    expect(wrapper.find('[data-testid="undo"]').attributes('disabled')).toBeDefined()
+  })
+
+  it('撤销后做出新选择会截断重做分支', async () => {
+    const wrapper = mountRound()
+    await press(wrapper, 'A')
+    await press(wrapper, 'B')
+    await undoByKey(wrapper) // 撤销 B
+    expect(wrapper.find('[data-testid="redo"]').attributes('disabled')).toBeUndefined()
+
+    // 在撤销状态下改选第 2 题为 D，重做分支被清空
+    await press(wrapper, 'D')
+    expect(wrapper.find('[data-testid="redo"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-testid="q2-D"]').classes()).toContain('option--selected')
+
+    // 撤销两次：先撤 D（焦点回第 2 题），再撤 A
+    await undoByKey(wrapper)
+    expect(wrapper.find('[data-testid="q2-D"]').classes()).not.toContain('option--selected')
+    expect(wrapper.find('.question--current').attributes('data-testid')).toBe('question-2')
+    await undoByKey(wrapper)
+    expect(wrapper.find('[data-testid="q1-A"]').classes()).not.toContain('option--selected')
+    expect(wrapper.find('.question--current').attributes('data-testid')).toBe('question-1')
+  })
+
+  it('撤销造成漏题后提交在原题显示漏答反馈', async () => {
+    const wrapper = mountRound()
+    await answerAll(wrapper, 'A')
+    // 撤销两次：第 20、19 题变回漏答，焦点逆序回到第 19 题
+    await undoByKey(wrapper)
+    await undoByKey(wrapper)
+    expect(wrapper.find('[data-testid="q19-A"]').classes()).not.toContain('option--selected')
+    expect(wrapper.find('[data-testid="q20-A"]').classes()).not.toContain('option--selected')
+
+    await wrapper.find('[data-testid="submit-round"]').trigger('click')
+    expect(wrapper.emitted('submit')).toBeUndefined()
+    const summary = wrapper.get('[data-testid="missing-summary"]').text()
+    expect(summary).toContain('2')
+    expect(summary).toContain('19')
+    expect(summary).toContain('20')
+    expect(wrapper.find('[data-testid="question-19"]').find('[data-testid="missing-marker"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="question-20"]').find('[data-testid="missing-marker"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="question-18"]').find('[data-testid="missing-marker"]').exists()).toBe(false)
+
+    // 重做补齐后可正常提交
+    await redoByKey(wrapper, 'Z')
+    await redoByKey(wrapper, 'Z')
+    await wrapper.find('[data-testid="submit-round"]').trigger('click')
+    const events = wrapper.emitted('submit')
+    expect(events).toBeDefined()
+    expect(events![0][0]).toHaveLength(20)
+  })
+
+  it('按钮禁用时快捷键也不改变答卡', async () => {
+    const wrapper = mountRound()
+    await undoByKey(wrapper)
+    await redoByKey(wrapper, 'Z')
+    expect(wrapper.findAll('.option--selected')).toHaveLength(0)
+    expect(wrapper.find('.question--current').attributes('data-testid')).toBe('question-1')
+
+    await press(wrapper, 'C')
+    await pressWith(wrapper, 'z', { ctrlKey: true, shiftKey: true }) // 无重做可做
+    expect(wrapper.find('[data-testid="q1-C"]').classes()).toContain('option--selected')
+    expect(wrapper.find('.question--current').attributes('data-testid')).toBe('question-2')
+  })
+
+  it('撤销/重做只作用于本轮，第二轮挂载时轨迹为空', async () => {
+    const first = mountRound(1)
+    await press(first, 'A')
+    await press(first, 'B')
+    await undoByKey(first)
+    expect(first.find('[data-testid="redo"]').attributes('disabled')).toBeUndefined()
+    first.unmount()
+
+    const second = mountRound(2)
+    expect(second.find('[data-testid="undo"]').attributes('disabled')).toBeDefined()
+    expect(second.find('[data-testid="redo"]').attributes('disabled')).toBeDefined()
+    expect(second.findAll('.option--selected')).toHaveLength(0)
+    // 任何撤销都不能恢复首录快照
+    await undoByKey(second)
+    await pressWith(second, 'z', { metaKey: true, shiftKey: true })
+    expect(second.findAll('.option--selected')).toHaveLength(0)
+    expect(second.find('.question--current').attributes('data-testid')).toBe('question-1')
   })
 })

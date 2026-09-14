@@ -2,14 +2,29 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { OPTIONS, QUESTIONS, type Option } from '../data/questions'
 import { parseBatchAnswers } from '../core/batchParse'
+import {
+  initHistory,
+  moveFocus,
+  recordSelection,
+  redoSelection,
+  undoSelection,
+  type EditState
+} from '../core/history'
 import type { Answer } from '../core/types'
 
 const props = defineProps<{ round: 1 | 2 }>()
 const emit = defineEmits<{ submit: [answers: readonly Answer[]] }>()
 
-/** 本轮作答始终从全空开始；组件以轮次为 key 整体重建，第二轮拿不到任何首录数据。 */
-const answers = ref<Answer[]>(QUESTIONS.map(() => null))
-const currentIndex = ref(0)
+/**
+ * 本轮作答始终从全空轨迹开始；组件以轮次为 key 整体重建，第二轮拿不到任何首录数据。
+ * 答卡、焦点、撤销/重做可用性全部来自领域纯函数返回的 EditState，
+ * 视图只提交“选择 / 撤销 / 重做 / 移动焦点”动作，不直接改答卡。
+ */
+const history = ref<EditState>(initHistory())
+const answers = computed(() => history.value.sheet)
+const currentIndex = computed(() => history.value.focus)
+const canUndo = computed(() => history.value.canUndo)
+const canRedo = computed(() => history.value.canRedo)
 const attempted = ref(false)
 
 /**
@@ -45,8 +60,9 @@ function toggleBatch() {
 function applyBatch() {
   if (!batchCheck.value.ok) return // 按钮已禁用，这里再兜一层，保证不合法绝不写入
   // 原子写入：一次性整体替换本轮答卡，不存在部分覆盖的中间态；
-  // 复制一份可变数组，与冻结的解析结果隔离。
-  answers.value = batchCheck.value.sheet.slice()
+  // 整卡替换等价于一条新的轨迹基线，写入前的单题轨迹随之作废，
+  // 焦点保持在当前题目。复制一份可变副本，与冻结的解析结果隔离。
+  history.value = initHistory(batchCheck.value.sheet.slice(), currentIndex.value)
   batchDraft.value = ''
   batchOpen.value = false
 }
@@ -71,17 +87,46 @@ function scrollCurrentIntoView() {
   })
 }
 
+/** 提交一次选择动作：重复选择同一选项由纯函数判为无效，答卡、焦点与轨迹均不变。 */
 function selectOption(option: Option, index: number = currentIndex.value) {
-  answers.value[index] = option
   // 作答后自动跳到该题下一题（末题保持原位）；方向键仍可随时回改。
-  currentIndex.value = Math.min(index + 1, QUESTIONS.length - 1)
+  const nextFocus = Math.min(index + 1, QUESTIONS.length - 1)
+  history.value = recordSelection(history.value, index, option, nextFocus)
+}
+
+function undo() {
+  history.value = undoSelection(history.value)
+}
+
+function redo() {
+  history.value = redoSelection(history.value)
 }
 
 function goTo(index: number) {
-  if (index >= 0 && index < QUESTIONS.length) currentIndex.value = index
+  history.value = moveFocus(history.value, index)
+}
+
+function isUndoShortcut(event: KeyboardEvent): boolean {
+  return (event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 'z'
+}
+
+function isRedoShortcut(event: KeyboardEvent): boolean {
+  return (event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'z'
 }
 
 function onKeydown(event: KeyboardEvent) {
+  // 撤销 / 重做：鼠标按钮与快捷键共用同一行为；禁用时纯函数原样返回，不改变答卡。
+  if (isUndoShortcut(event)) {
+    event.preventDefault()
+    undo()
+    return
+  }
+  if (isRedoShortcut(event)) {
+    event.preventDefault()
+    redo()
+    return
+  }
+
   const key = event.key.toUpperCase()
   if ((OPTIONS as readonly string[]).includes(key)) {
     event.preventDefault()
@@ -100,7 +145,7 @@ function onKeydown(event: KeyboardEvent) {
       goTo(currentIndex.value - 1)
       break
     default:
-      // 其他按键一律忽略。
+      // 其他按键一律忽略，不进入轨迹。
       break
   }
 }
@@ -129,8 +174,29 @@ onMounted(() => {
     <header class="round__header">
       <h2>第 {{ props.round }} 轮录入</h2>
       <p class="hint">
-        键盘 A / B / C / D 作答，↑ ↓ 或 ← → 切换题目；其他按键忽略。也可打开批量填入，粘贴扫描枪或 OCR 结果。
+        键盘 A / B / C / D 作答，↑ ↓ 或 ← → 切换题目；误触可点“撤销”或按 Ctrl/Cmd+Z，“重做”或
+        Ctrl/Cmd+Shift+Z 恢复；其他按键忽略。也可打开批量填入，粘贴扫描枪或 OCR 结果。
       </p>
+      <div class="trail" data-testid="trail-controls">
+        <button
+          type="button"
+          class="trail__btn"
+          data-testid="undo"
+          :disabled="!canUndo"
+          @click="undo"
+        >
+          撤销（Ctrl/Cmd+Z）
+        </button>
+        <button
+          type="button"
+          class="trail__btn"
+          data-testid="redo"
+          :disabled="!canRedo"
+          @click="redo"
+        >
+          重做（Ctrl/Cmd+Shift+Z）
+        </button>
+      </div>
     </header>
 
     <div class="batch">
@@ -165,7 +231,7 @@ onMounted(() => {
 
         <div v-if="batchSheet.length > 0" class="batch__preview" data-testid="batch-preview">
           <p class="batch__summary">
-            已解析 {{ batchSheet.length }}/20 个选项，确认后一次性写入本轮答卡（现有答案将被整体覆盖）：
+            已解析 {{ batchSheet.length }}/20 个选项，确认后一次性写入本轮答卡（现有答案与编辑轨迹将被整体覆盖）：
           </p>
           <ol class="batch__list">
             <li v-for="(option, index) in batchSheet" :key="index" class="batch__item">
