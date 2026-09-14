@@ -123,3 +123,96 @@ describe('RoundView 轮次隔离', () => {
     expect(wrapper.find('[data-testid="q5-D"]').classes()).toContain('option--selected')
   })
 })
+
+describe('RoundView 批量填入', () => {
+  it('合法文本一次性写入 20 题（原子覆盖已有答案），写入后可单题修改并提交', async () => {
+    const wrapper = mountRound()
+    // 先用键盘录入 2 题，验证批量写入会整体覆盖而非跳过
+    await press(wrapper, 'A')
+    await press(wrapper, 'B')
+
+    await wrapper.find('[data-testid="batch-toggle"]').trigger('click')
+    const input = wrapper.find('[data-testid="batch-input"]')
+    // 混合分隔符与大小写的 20 个选项
+    await input.setValue(Array(20).fill('c').join(', \n'))
+
+    expect(wrapper.find('[data-testid="batch-error"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="batch-preview"]').exists()).toBe(true)
+    await wrapper.find('[data-testid="batch-apply"]').trigger('click')
+
+    // 20 题全部写成 C（此前的 A、B 被整体覆盖），填入区自动收起
+    for (let n = 1; n <= 20; n++) {
+      expect(wrapper.find(`[data-testid="q${n}-C"]`).classes()).toContain('option--selected')
+    }
+    expect(wrapper.find('[data-testid="batch-panel"]').exists()).toBe(false)
+
+    // 写入后仍可按原流程改单题并提交
+    await wrapper.find('[data-testid="q1-D"]').trigger('click')
+    await wrapper.find('[data-testid="submit-round"]').trigger('click')
+    const events = wrapper.emitted('submit')
+    expect(events).toBeDefined()
+    const answers = events![0][0] as readonly Answer[]
+    expect(answers).toHaveLength(20)
+    expect(answers[0]).toBe('D')
+    expect(answers[1]).toBe('C')
+    expect(answers[19]).toBe('C')
+  })
+
+  it('非法字符与数量不足时指出错误、禁用确认，答卡不被部分覆盖', async () => {
+    const wrapper = mountRound()
+    await press(wrapper, 'A') // 第 1 题已答 A
+    await wrapper.find('[data-testid="batch-toggle"]').trigger('click')
+    const input = wrapper.find('[data-testid="batch-input"]')
+    const apply = wrapper.find('[data-testid="batch-apply"]')
+
+    // 含非法字符：指出首个非法字符，确认不可用
+    await input.setValue('A B X C')
+    expect(wrapper.find('[data-testid="batch-error"]').text()).toContain('X')
+    expect(apply.attributes('disabled')).toBeDefined()
+
+    // 数量不足：指出当前数量，确认不可用
+    await input.setValue('A B C')
+    expect(wrapper.find('[data-testid="batch-error"]').text()).toContain('3')
+    expect(apply.attributes('disabled')).toBeDefined()
+
+    // 即使强制触发点击也不会写入
+    await apply.trigger('click')
+
+    // 答卡保持原样：仍只有第 1 题 A，其余 19 题漏答
+    expect(wrapper.find('[data-testid="q1-A"]').classes()).toContain('option--selected')
+    expect(wrapper.findAll('.option--selected')).toHaveLength(1)
+    await wrapper.find('[data-testid="submit-round"]').trigger('click')
+    expect(wrapper.emitted('submit')).toBeUndefined()
+    expect(wrapper.findAll('[data-testid="missing-marker"]')).toHaveLength(19)
+  })
+
+  it('关闭批量填入区不改变已录答案', async () => {
+    const wrapper = mountRound()
+    await wrapper.find('[data-testid="batch-toggle"]').trigger('click')
+    await wrapper.find('[data-testid="batch-input"]').setValue(Array(20).fill('B').join(' '))
+    await wrapper.find('[data-testid="batch-apply"]').trigger('click')
+
+    // 再次打开后直接收起，不做任何写入
+    await wrapper.find('[data-testid="batch-toggle"]').trigger('click')
+    expect(wrapper.find('[data-testid="batch-panel"]').exists()).toBe(true)
+    await wrapper.find('[data-testid="batch-toggle"]').trigger('click')
+    expect(wrapper.find('[data-testid="batch-panel"]').exists()).toBe(false)
+
+    // 已录的 20 个 B 原样保留
+    for (let n = 1; n <= 20; n++) {
+      expect(wrapper.find(`[data-testid="q${n}-B"]`).classes()).toContain('option--selected')
+    }
+  })
+
+  it('批量输入框中的按键不会录入答卡、不移动题序', async () => {
+    const wrapper = mountRound()
+    await wrapper.find('[data-testid="batch-toggle"]').trigger('click')
+    const input = wrapper.find('[data-testid="batch-input"]')
+    await input.trigger('keydown', { key: 'A' })
+    await input.trigger('keydown', { key: 'd' })
+    await input.trigger('keydown', { key: 'ArrowDown' })
+
+    expect(wrapper.findAll('.option--selected')).toHaveLength(0)
+    expect(wrapper.findAll('.question--current')[0].attributes('data-testid')).toBe('question-1')
+  })
+})

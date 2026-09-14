@@ -180,6 +180,129 @@ h1 {
   filter: brightness(1.08);
 }
 
+/* 批量填入区 */
+.batch {
+  margin-bottom: 1rem;
+}
+
+.batch__toggle {
+  background: none;
+  border: 1px dashed var(--primary);
+  color: var(--primary);
+  border-radius: 6px;
+  padding: 0.4rem 0.9rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.batch__toggle:hover {
+  background: var(--primary-soft);
+}
+
+.batch__panel {
+  margin-top: 0.6rem;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.9rem 1rem;
+}
+
+.batch__label {
+  display: block;
+  font-size: 0.88rem;
+  color: var(--muted);
+  margin-bottom: 0.5rem;
+}
+
+.batch__input {
+  width: 100%;
+  font-family: inherit;
+  font-size: 0.95rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem 0.7rem;
+  resize: vertical;
+}
+
+.batch__input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary-soft);
+}
+
+.batch__error {
+  background: var(--danger-soft);
+  color: var(--danger);
+  border: 1px solid var(--danger);
+  border-radius: 6px;
+  padding: 0.5rem 0.7rem;
+  font-size: 0.88rem;
+  margin: 0.6rem 0 0;
+}
+
+.batch__preview {
+  margin-top: 0.6rem;
+}
+
+.batch__summary {
+  margin: 0 0 0.5rem;
+  color: var(--success);
+  font-size: 0.9rem;
+}
+
+.batch__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 0.35rem;
+}
+
+.batch__item {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.2rem 0.45rem;
+  font-size: 0.85rem;
+}
+
+.batch__no {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.batch__opt {
+  font-weight: 700;
+}
+
+.batch__apply {
+  margin-top: 0.7rem;
+  width: 100%;
+  padding: 0.55rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #fff;
+  background: var(--primary);
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.batch__apply:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.batch__apply:disabled {
+  background: var(--border);
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
 /* 结果页 */
 .result {
   background: var(--card);
