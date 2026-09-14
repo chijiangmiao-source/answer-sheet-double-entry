@@ -30,8 +30,24 @@ const emit = defineEmits<{ restart: [] }>()
         <tbody>
           <tr v-for="d in verdict.differences" :key="d.number" :data-testid="`diff-${d.number}`">
             <td>第 {{ d.number }} 题</td>
-            <td>{{ d.first }}</td>
-            <td>{{ d.second }}</td>
+            <td>
+              {{ d.first }}
+              <span
+                v-if="d.firstReviewed"
+                class="result__review"
+                :data-testid="`diff-${d.number}-first-review`"
+                >首录待复核</span
+              >
+            </td>
+            <td>
+              {{ d.second }}
+              <span
+                v-if="d.secondReviewed"
+                class="result__review"
+                :data-testid="`diff-${d.number}-second-review`"
+                >第二遍待复核</span
+              >
+            </td>
           </tr>
         </tbody>
       </table>

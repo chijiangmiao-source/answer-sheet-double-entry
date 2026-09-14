@@ -10,8 +10,8 @@ const { phase, round, verdict, submit, restart } = createSession()
 /** 每次重新开始递增，配合轮次作为 key，强制录入视图整体重建为空白状态。 */
 const sessionId = ref(0)
 
-function onSubmit(answers: readonly Answer[]) {
-  submit(answers)
+function onSubmit(answers: readonly Answer[], reviewFlags: readonly boolean[]) {
+  submit(answers, reviewFlags)
 }
 
 function onRestart() {

@@ -14,7 +14,9 @@ import {
 import type { Answer } from '../core/types'
 
 const props = defineProps<{ round: 1 | 2 }>()
-const emit = defineEmits<{ submit: [answers: readonly Answer[]] }>()
+const emit = defineEmits<{
+  submit: [answers: readonly Answer[], reviewFlags: readonly boolean[]]
+}>()
 
 /**
  * 本轮作答始终从全空轨迹开始；组件以轮次为 key 整体重建，第二轮拿不到任何首录数据。
@@ -27,6 +29,18 @@ const currentIndex = computed(() => history.value.focus)
 const canUndo = computed(() => history.value.canUndo)
 const canRedo = computed(() => history.value.canRedo)
 const attempted = ref(false)
+
+/**
+ * 待复核标记独立于编辑轨迹维护：键盘作答、批量写入、撤销/重做都不会触碰它，
+ * 也不影响焦点与完整性判断。组件以轮次为 key 整体重建，故每轮都从全未标记开始；
+ * 漏答被拒时组件不销毁，原位错误与标记同时保留。
+ */
+const reviewFlags = ref<boolean[]>(new Array<boolean>(QUESTIONS.length).fill(false))
+
+function toggleReview(index: number) {
+  // 仅翻转本题标记；@click.stop 保证不触发题卡的焦点移动。
+  reviewFlags.value[index] = !reviewFlags.value[index]
+}
 
 /**
  * 批量填入区只维护草稿与校验结果；确认前不触碰答卡，
@@ -157,7 +171,8 @@ function onKeydown(event: KeyboardEvent) {
 function onSubmit() {
   attempted.value = true
   if (!isComplete.value) return
-  emit('submit', answers.value.slice())
+  // 答案与标记各交一份副本：标记不随答案编辑（撤销/重做/批量）变化。
+  emit('submit', answers.value.slice(), reviewFlags.value.slice())
 }
 
 watch(currentIndex, scrollCurrentIntoView)
@@ -179,7 +194,8 @@ onMounted(() => {
       <h2>第 {{ props.round }} 轮录入</h2>
       <p class="hint">
         键盘 A / B / C / D 作答，↑ ↓ 或 ← → 切换题目；误触可点“撤销”或按 Ctrl/Cmd+Z，“重做”或
-        Ctrl/Cmd+Shift+Z 恢复；其他按键忽略。也可打开批量填入，粘贴扫描枪或 OCR 结果。
+        Ctrl/Cmd+Shift+Z 恢复；其他按键忽略。也可打开批量填入，粘贴扫描枪或 OCR 结果。纸面模糊、
+        涂改难以辨认时，可点题旁“待复核”（再次点击取消）；标记不进入编辑轨迹，不影响焦点与提交。
       </p>
       <div class="trail" data-testid="trail-controls">
         <button
@@ -276,12 +292,24 @@ onMounted(() => {
       >
         <div class="question__head">
           <span class="question__no">第 {{ question.number }} 题</span>
-          <span
-            v-if="attempted && answers[index] === null"
-            class="question__missing"
-            data-testid="missing-marker"
-            >此题漏答</span
-          >
+          <span class="question__head-right">
+            <button
+              type="button"
+              class="review"
+              :class="{ 'review--on': reviewFlags[index] }"
+              :aria-pressed="reviewFlags[index] ? 'true' : 'false'"
+              :data-testid="`review-${question.number}`"
+              @click.stop="toggleReview(index)"
+            >
+              {{ reviewFlags[index] ? '已标记待复核 ✓' : '待复核' }}
+            </button>
+            <span
+              v-if="attempted && answers[index] === null"
+              class="question__missing"
+              data-testid="missing-marker"
+              >此题漏答</span
+            >
+          </span>
         </div>
         <p class="question__stem">{{ question.stem }}</p>
         <div class="options" role="radiogroup" :aria-label="`第 ${question.number} 题选项`">

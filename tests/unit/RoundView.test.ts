@@ -114,6 +114,136 @@ describe('RoundView 键盘录入', () => {
   })
 })
 
+describe('RoundView 待复核标记', () => {
+  async function answerAllKeys(wrapper: VueWrapper, value: Option) {
+    for (let i = 0; i < 20; i++) await press(wrapper, value)
+  }
+
+  it('每题旁可标记/取消“待复核”，提交时随答案一并发出', async () => {
+    const wrapper = mountRound()
+    const btn3 = wrapper.get('[data-testid="review-3"]')
+    expect(btn3.attributes('aria-pressed')).toBe('false')
+    expect(btn3.text()).toBe('待复核')
+
+    await btn3.trigger('click')
+    expect(btn3.attributes('aria-pressed')).toBe('true')
+    expect(btn3.text()).toContain('已标记待复核')
+
+    // 再次点击取消
+    await btn3.trigger('click')
+    expect(btn3.attributes('aria-pressed')).toBe('false')
+
+    // 标记第 1、20 题后答完并提交
+    await wrapper.get('[data-testid="review-1"]').trigger('click')
+    await wrapper.get('[data-testid="review-20"]').trigger('click')
+    await answerAllKeys(wrapper, 'A')
+    await wrapper.get('[data-testid="submit-round"]').trigger('click')
+
+    const events = wrapper.emitted('submit')!
+    expect(events[0]).toHaveLength(2)
+    const flags = events[0][1] as readonly boolean[]
+    expect(flags).toHaveLength(20)
+    expect(flags[0]).toBe(true)
+    expect(flags[19]).toBe(true)
+    expect(flags.filter(Boolean)).toHaveLength(2)
+    // 发出的是副本：组件内部状态后续翻转不影响已发记录
+    expect(Object.isFrozen(flags)).toBe(false)
+  })
+
+  it('标记不改变焦点：点击标记后当前题不变', async () => {
+    const wrapper = mountRound()
+    await wrapper.get('[data-testid="review-5"]').trigger('click')
+    expect(wrapper.find('.question--current').attributes('data-testid')).toBe('question-1')
+    // 点击题目本身才移动焦点；之后再点标记也不带走焦点
+    await wrapper.get('[data-testid="question-8"]').trigger('click')
+    expect(wrapper.find('.question--current').attributes('data-testid')).toBe('question-8')
+    await wrapper.get('[data-testid="review-8"]').trigger('click')
+    expect(wrapper.find('.question--current').attributes('data-testid')).toBe('question-8')
+  })
+
+  it('标记不进入编辑轨迹：撤销/重做只改答案，标记原样保留', async () => {
+    const wrapper = mountRound()
+    // 只做标记：撤销/重做均不可用，说明标记没有进入轨迹
+    await wrapper.get('[data-testid="review-1"]').trigger('click')
+    expect(wrapper.get('[data-testid="undo"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="redo"]').attributes('disabled')).toBeDefined()
+
+    await press(wrapper, 'A') // 第 1 题 A，焦点到第 2 题
+    await press(wrapper, 'B')
+    await press(wrapper, 'C')
+    await undoByKey(wrapper)
+    expect(wrapper.get('[data-testid="q3-C"]').classes()).not.toContain('option--selected')
+    expect(wrapper.get('[data-testid="review-1"]').attributes('aria-pressed')).toBe('true')
+    await undoByKey(wrapper)
+    expect(wrapper.get('[data-testid="q2-B"]').classes()).not.toContain('option--selected')
+    expect(wrapper.get('[data-testid="review-1"]').attributes('aria-pressed')).toBe('true')
+    // 撤销后重做分支可用，标记按钮状态依旧
+    await redoByKey(wrapper, 'Z')
+    expect(wrapper.get('[data-testid="q2-B"]').classes()).toContain('option--selected')
+    expect(wrapper.get('[data-testid="review-1"]').attributes('aria-pressed')).toBe('true')
+
+    // 三次撤销清空全部答案轨迹后，撤销重新禁用，标记仍在
+    await undoByKey(wrapper)
+    await undoByKey(wrapper)
+    expect(wrapper.findAll('.option--selected')).toHaveLength(0)
+    expect(wrapper.get('[data-testid="undo"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="review-1"]').attributes('aria-pressed')).toBe('true')
+  })
+
+  it('批量整卡写入不改变标记', async () => {
+    const wrapper = mountRound()
+    await wrapper.get('[data-testid="review-7"]').trigger('click')
+    await wrapper.get('[data-testid="batch-toggle"]').trigger('click')
+    await wrapper.get('[data-testid="batch-input"]').setValue(Array(20).fill('d').join(' '))
+    await wrapper.get('[data-testid="batch-apply"]').trigger('click')
+    for (let n = 1; n <= 20; n++) {
+      expect(wrapper.find(`[data-testid="q${n}-D"]`).classes()).toContain('option--selected')
+    }
+    expect(wrapper.get('[data-testid="review-7"]').attributes('aria-pressed')).toBe('true')
+    // 覆盖后撤销：答案回到空卡，标记仍在
+    await undoByKey(wrapper)
+    expect(wrapper.findAll('.option--selected')).toHaveLength(0)
+    expect(wrapper.get('[data-testid="review-7"]').attributes('aria-pressed')).toBe('true')
+  })
+
+  it('标记不影响完整性：漏答照样被拒，且原位错误与标记同时保留', async () => {
+    const wrapper = mountRound()
+    await press(wrapper, 'A') // 只答第 1 题
+    // 漏答的第 5 题也可以标记
+    await wrapper.get('[data-testid="review-5"]').trigger('click')
+    await wrapper.get('[data-testid="review-1"]').trigger('click')
+    await wrapper.get('[data-testid="submit-round"]').trigger('click')
+
+    expect(wrapper.emitted('submit')).toBeUndefined()
+    expect(wrapper.findAll('[data-testid="missing-marker"]')).toHaveLength(19)
+    expect(wrapper.get('[data-testid="review-5"]').attributes('aria-pressed')).toBe('true')
+    expect(wrapper.get('[data-testid="review-1"]').attributes('aria-pressed')).toBe('true')
+
+    // 补齐后提交成功，标记随提交保留
+    for (let i = 0; i < 19; i++) await press(wrapper, 'B')
+    await wrapper.get('[data-testid="submit-round"]').trigger('click')
+    const events = wrapper.emitted('submit')!
+    const flags = events[0][1] as readonly boolean[]
+    expect(flags[0]).toBe(true)
+    expect(flags[4]).toBe(true)
+    expect(flags.filter(Boolean)).toHaveLength(2)
+  })
+
+  it('重新挂载（下一轮/重新开始）从空答案、空标记开始', async () => {
+    const first = mountRound(1)
+    await press(first, 'A')
+    await first.get('[data-testid="review-3"]').trigger('click')
+    expect(first.get('[data-testid="review-3"]').attributes('aria-pressed')).toBe('true')
+    first.unmount()
+
+    const second = mountRound(2)
+    for (let n = 1; n <= 20; n++) {
+      expect(second.get(`[data-testid="review-${n}"]`).attributes('aria-pressed')).toBe('false')
+    }
+    expect(second.findAll('.option--selected')).toHaveLength(0)
+  })
+})
+
 describe('RoundView 轮次隔离', () => {
   it('第二轮组件独立挂载时页面内容、焦点与输入均不预填首录答案', async () => {
     const first = mountRound(1)
