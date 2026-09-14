@@ -52,6 +52,59 @@ describe('commitRound —— 完整性校验与快照', () => {
   })
 })
 
+describe('commitRound —— 固定题数校验', () => {
+  it('题数不足固定 20 题（即使已有选项、无空项）也拒绝整轮提交', () => {
+    const one = ['A'] as Answer[]
+    expect(commitRound(one)).toBeNull()
+
+    const nineteen = fill('A').slice(0, 19)
+    expect(nineteen).toHaveLength(19)
+    expect(commitRound(nineteen)).toBeNull()
+  })
+
+  it('超过固定 20 题（21 题均已作答）在保存前被拒绝', () => {
+    const twentyOne: Answer[] = [...fill('A'), 'B']
+    expect(twentyOne).toHaveLength(QUESTION_COUNT + 1)
+    expect(commitRound(twentyOne)).toBeNull()
+  })
+})
+
+describe('commitRound —— 选项合法性与标记结构校验', () => {
+  it('含规定范围（A/B/C/D）外字母但没有空项时拒绝整轮数据', () => {
+    const illegal = fill('A')
+    illegal[10] = 'E' as Option
+    expect(commitRound(illegal)).toBeNull()
+
+    const lower = fill('B')
+    lower[0] = 'a' as Option // 小写字母同样不属于合法选项
+    expect(commitRound(lower)).toBeNull()
+  })
+
+  it('待复核标记项数少于 20 时拒绝整轮记录，缺失位置不得当成未标记', () => {
+    expect(commitRound(fill('A'), new Array<boolean>(QUESTION_COUNT - 1).fill(false))).toBeNull()
+  })
+
+  it('待复核标记项数多于 20 时同样拒绝', () => {
+    expect(commitRound(fill('A'), new Array<boolean>(QUESTION_COUNT + 1).fill(false))).toBeNull()
+  })
+})
+
+describe('adjudicate —— 非法数据不得参与裁决', () => {
+  it('拒绝裁决含范围外选项的答题卡', () => {
+    const illegal = fill('A')
+    illegal[5] = 'E' as Option
+    expect(() => adjudicate(illegal, fill('A'))).toThrow('非法选项')
+    expect(() => adjudicate(fill('A'), illegal)).toThrow('非法选项')
+  })
+
+  it('拒绝标记结构不完整的轮次记录', () => {
+    const shortFlags = new Array<boolean>(QUESTION_COUNT - 1).fill(false)
+    const record = { answers: fill('A'), reviewFlags: shortFlags }
+    expect(() => adjudicate(record, fill('A'))).toThrow('待复核标记')
+    expect(() => adjudicate(fill('A'), record)).toThrow('待复核标记')
+  })
+})
+
 describe('adjudicate —— 逐题裁决规则', () => {
   it('两轮完全一致：通过且 20/20，无差异', () => {
     const verdict = adjudicate(fill('A'), fill('A'))

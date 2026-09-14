@@ -10,6 +10,65 @@ function fill(value: Option, overrides: Record<number, Option> = {}): Answer[] {
   return sheet
 }
 
+describe('会话轮次推进前的题数校验', () => {
+  it('仅含一题且已有选项的首轮答卡被拒绝，停留首轮、不进入第二轮', () => {
+    const session = createSession()
+    expect(session.submit(['A'])).toBe(false)
+    expect(session.phase.value).toBe('first')
+    expect(session.round.value).toBe(1)
+    expect(session.verdict.value).toBeNull()
+
+    // 随后提交完整合法答卡仍可正常推进（拒绝不污染会话状态）
+    expect(session.submit(fill('A'))).toBe(true)
+    expect(session.phase.value).toBe('second')
+  })
+
+  it('二十一题均已作答的首轮答卡在轮次推进前被拒绝', () => {
+    const session = createSession()
+    const twentyOne: Answer[] = [...fill('A'), 'B']
+    expect(session.submit(twentyOne)).toBe(false)
+    expect(session.phase.value).toBe('first')
+    expect(session.verdict.value).toBeNull()
+  })
+
+  it('第二轮收到题数不足或超出的答卡时停留第二轮、不产生裁决', () => {
+    const session = createSession()
+    session.submit(fill('A'))
+
+    expect(session.submit(['B'])).toBe(false)
+    expect(session.phase.value).toBe('second')
+    expect(session.verdict.value).toBeNull()
+
+    const twentyOne: Answer[] = [...fill('B'), 'A']
+    expect(session.submit(twentyOne)).toBe(false)
+    expect(session.phase.value).toBe('second')
+    expect(session.verdict.value).toBeNull()
+  })
+})
+
+describe('会话对非法选项与标记结构的拒绝', () => {
+  it('含范围外字母但无空项的首轮数据被拒绝且不保存、不参与核对，停留在首轮', () => {
+    const session = createSession()
+    const illegal = fill('A')
+    illegal[6] = 'E' as Option
+    expect(session.submit(illegal)).toBe(false)
+    expect(session.phase.value).toBe('first')
+    expect(session.verdict.value).toBeNull()
+  })
+
+  it('待复核标记少于 20 项时拒绝整轮提交，缺失位置不被当成未标记', () => {
+    const session = createSession()
+    const shortFlags = new Array<boolean>(QUESTION_COUNT - 1).fill(false)
+    expect(session.submit(fill('A'), shortFlags)).toBe(false)
+    expect(session.phase.value).toBe('first')
+    expect(session.verdict.value).toBeNull()
+
+    // 补齐 20 项标记后提交被接受
+    expect(session.submit(fill('A'), new Array<boolean>(QUESTION_COUNT).fill(false))).toBe(true)
+    expect(session.phase.value).toBe('second')
+  })
+})
+
 describe('会话轮次隔离', () => {
   it('首录未完成时不能进入第二轮，且不产生裁决', () => {
     const session = createSession()
