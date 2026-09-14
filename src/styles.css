@@ -476,3 +476,140 @@ h1 {
   margin: 0 0 1rem;
   color: var(--success);
 }
+
+/* 首页键位校准入口 */
+.home__entry {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin: 0 0 0.9rem;
+}
+
+.home__practice {
+  background: #fff;
+  border: 1px dashed var(--primary);
+  color: var(--primary);
+  border-radius: 6px;
+  padding: 0.4rem 0.9rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.home__practice:hover {
+  background: var(--primary-soft);
+}
+
+.home__note {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+/* 键位校准 */
+.practice:focus {
+  outline: none;
+}
+
+.practice__header h2 {
+  margin: 0 0 0.25rem;
+  font-size: 1.15rem;
+}
+
+.practice__idle,
+.practice__running,
+.practice__done {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.5rem;
+  margin-bottom: 1rem;
+}
+
+.practice__running {
+  text-align: center;
+}
+
+.practice__step {
+  margin: 0 0 0.5rem;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.practice__target {
+  margin: 0;
+  font-size: 3.2rem;
+  font-weight: 700;
+  color: var(--primary);
+  line-height: 1.2;
+}
+
+.practice__tip {
+  margin: 0.5rem 0 1rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.practice__again {
+  background: #fff;
+  border: 1px solid var(--primary);
+  color: var(--primary);
+  border-radius: 6px;
+  padding: 0.35rem 0.8rem;
+  font-size: 0.88rem;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.practice__again:hover {
+  background: var(--primary-soft);
+}
+
+.practice__done h3 {
+  margin: 0 0 0.75rem;
+  font-size: 1.05rem;
+}
+
+.practice__hits {
+  margin: 0 0 0.5rem;
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--success);
+}
+
+.practice__missteps {
+  margin: 0 0 0.75rem;
+}
+
+.practice__misses {
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.practice__misses li {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.3rem 0.7rem;
+  font-size: 0.9rem;
+  background: #fff;
+}
+
+.practice__exit {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 6px;
+  padding: 0.4rem 0.9rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.practice__exit:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
