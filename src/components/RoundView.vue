@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, inject, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { OPTIONS, QUESTIONS, type Option } from '../data/questions'
 import { parseBatchAnswers } from '../core/batchParse'
 import {
@@ -11,6 +11,12 @@ import {
   undoSelection,
   type EditState
 } from '../core/history'
+import {
+  SpeechEngineKey,
+  createSpeechController,
+  createWebSpeechEngine
+} from '../core/speech'
+import { useSpeechPreference } from '../composables/useSpeechPreference'
 import type { Answer } from '../core/types'
 
 const props = defineProps<{ round: 1 | 2 }>()
@@ -29,6 +35,26 @@ const currentIndex = computed(() => history.value.focus)
 const canUndo = computed(() => history.value.canUndo)
 const canRedo = computed(() => history.value.canRedo)
 const attempted = ref(false)
+
+/**
+ * 可选语音核读：控制器随本轮组件创建、随卸载销毁——跨轮保留的只有用户的开/关偏好，
+ * 待播队列在切换轮次时随旧实例取消清空，不会把首录的语音事件带入第二轮。
+ * RoundView 仅在单题选择确实改变答案时上交（题号, 选项），其余编辑动作一律不通知。
+ */
+const { speechReviewEnabled, setSpeechReviewEnabled } = useSpeechPreference()
+// 测试可经 SpeechEngineKey 注入假引擎；生产缺省取浏览器原生 Web Speech 适配。
+const speechEngine = inject(SpeechEngineKey, createWebSpeechEngine())
+const speech = createSpeechController(speechEngine, speechReviewEnabled.value)
+const speechSupported = computed(() => speech.supported)
+// 展示以“偏好开 && 环境支持”为准：不支持环境即使偏好落盘为开，也呈现为关闭且不可点。
+const speechEnabled = computed(() => speechSupported.value && speechReviewEnabled.value)
+onUnmounted(() => speech.dispose())
+
+function toggleSpeechReview() {
+  if (!speech.supported) return // 不支持环境入口不可用
+  setSpeechReviewEnabled(!speechReviewEnabled.value)
+  speech.setEnabled(speechReviewEnabled.value)
+}
 
 /**
  * 待复核标记独立于编辑轨迹维护：键盘作答、批量写入、撤销/重做都不会触碰它，
@@ -104,9 +130,15 @@ function scrollCurrentIntoView() {
 
 /** 提交一次选择动作：重复选择同一选项由纯函数判为无效，答卡、焦点与轨迹均不变。 */
 function selectOption(option: Option, index: number = currentIndex.value) {
+  const before = history.value.sheet[index]
   // 作答后自动跳到该题下一题（末题保持原位）；方向键仍可随时回改。
   const nextFocus = Math.min(index + 1, QUESTIONS.length - 1)
   history.value = recordSelection(history.value, index, option, nextFocus)
+  // 只有真正的纸面单题输入（值发生变化）才核读；重复点击同一选项纯函数原样返回，
+  // 此处比对前后值即可静默。撤销/重做与批量写入不走本函数，天然不播报。
+  if (before !== option && history.value.sheet[index] === option) {
+    speech.announce(index + 1, option)
+  }
 }
 
 function undo() {
@@ -216,6 +248,23 @@ onMounted(() => {
         >
           重做（Ctrl/Cmd+Shift+Z）
         </button>
+      </div>
+      <div class="speech" data-testid="speech-review">
+        <button
+          type="button"
+          class="speech__btn"
+          :class="{ 'speech__btn--on': speechEnabled }"
+          data-testid="speech-toggle"
+          :disabled="!speechSupported"
+          :aria-pressed="speechEnabled ? 'true' : 'false'"
+          @click="toggleSpeechReview"
+        >
+          语音核读：{{ speechEnabled ? '已开启' : '已关闭' }}
+        </button>
+        <span class="speech__hint">
+          <template v-if="speechSupported">开启后每次有效选择播报“第几题、所选字母”；重复点击、撤销重做与批量写入不播报。</template>
+          <span v-else data-testid="speech-unsupported">当前浏览器不支持语音合成，语音核读不可用。</span>
+        </span>
       </div>
     </header>
 
