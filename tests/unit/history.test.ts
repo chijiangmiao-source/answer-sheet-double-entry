@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   initHistory,
   moveFocus,
+  recordBatch,
   recordSelection,
   redoSelection,
   undoSelection,
@@ -18,25 +19,30 @@ function pick(sheet: readonly Answer[], index: number): Answer {
   return sheet[index]
 }
 
+function fullSheet(value: Answer): Answer[] {
+  return createEmptySheet().map(() => value)
+}
+
 describe('initHistory —— 每轮全新轨迹', () => {
   it('初始为空白答卡、焦点第一题、撤销重做均不可用', () => {
     const state = initHistory()
     expect(sheetOf(state)).toEqual(createEmptySheet())
     expect(state.focus).toBe(0)
-    expect(state.baseFocus).toBe(0)
     expect(state.undoStack).toEqual([])
     expect(state.redoStack).toEqual([])
     expect(state.canUndo).toBe(false)
     expect(state.canRedo).toBe(false)
   })
 
-  it('状态整体冻结：答卡、栈与单条记录均不可改', () => {
+  it('状态整体冻结：答卡、栈、步骤与单条变化均不可改', () => {
     let state = initHistory()
     state = recordSelection(state, 0, 'A', 1)
     expect(Object.isFrozen(state)).toBe(true)
     expect(Object.isFrozen(state.sheet)).toBe(true)
     expect(Object.isFrozen(state.undoStack)).toBe(true)
     expect(Object.isFrozen(state.undoStack[0])).toBe(true)
+    expect(Object.isFrozen(state.undoStack[0].changes)).toBe(true)
+    expect(Object.isFrozen(state.undoStack[0].changes[0])).toBe(true)
     expect(() => {
       // @ts-expect-error 只读状态运行时同样冻结
       state.sheet[0] = 'B'
@@ -51,19 +57,23 @@ describe('initHistory —— 每轮全新轨迹', () => {
 })
 
 describe('recordSelection —— 轨迹记录与无效动作', () => {
-  it('有效变化记录题号、前后值与操作后焦点', () => {
+  it('有效变化记录题号、前后值与操作前后焦点', () => {
     let state = initHistory()
     state = recordSelection(state, 0, 'A', 1)
     expect(state.undoStack).toEqual([
-      { index: 0, before: null, after: 'A', focusAfter: 1 }
+      { changes: [{ index: 0, before: null, after: 'A' }], focusBefore: 0, focusAfter: 1 }
     ])
     expect(pick(sheetOf(state), 0)).toBe('A')
     expect(state.focus).toBe(1)
     expect(state.canUndo).toBe(true)
 
-    // 改写已有答案：before 记录旧选项而非 null
+    // 改写已有答案：before 记录旧选项而非 null；focusBefore 是操作前焦点
     state = recordSelection(state, 0, 'C', 1)
-    expect(state.undoStack[1]).toEqual({ index: 0, before: 'A', after: 'C', focusAfter: 1 })
+    expect(state.undoStack[1]).toEqual({
+      changes: [{ index: 0, before: 'A', after: 'C' }],
+      focusBefore: 1,
+      focusAfter: 1
+    })
     expect(pick(sheetOf(state), 0)).toBe('C')
   })
 
@@ -97,14 +107,14 @@ describe('recordSelection —— 轨迹记录与无效动作', () => {
     state = undoSelection(state) // 撤销 B
     expect(state.canUndo).toBe(true)
     expect(state.canRedo).toBe(true)
-    expect(state.redoStack.map((e) => e.after)).toEqual(['C', 'B'])
+    expect(state.redoStack.flatMap((e) => e.changes.map((c) => c.after))).toEqual(['C', 'B'])
 
     // 在撤销状态下改选（哪怕是同一题的不同选项），重做分支立即清空
     const branched = recordSelection(state, 1, 'D', 2)
     expect(branched.redoStack).toEqual([])
     expect(branched.canRedo).toBe(false)
     // 已保留的更早轨迹不受影响，仍可撤销到 A
-    expect(branched.undoStack.map((e) => e.after)).toEqual(['A', 'D'])
+    expect(branched.undoStack.flatMap((e) => e.changes.map((c) => c.after))).toEqual(['A', 'D'])
   })
 })
 
@@ -117,13 +127,13 @@ describe('undoSelection / redoSelection —— 逆序与原序恢复', () => {
 
     state = undoSelection(state)
     expect(pick(sheetOf(state), 2)).toBeNull()
-    expect(state.focus).toBe(2) // 回到第二条记录操作后的焦点
+    expect(state.focus).toBe(2) // 回到第二条步骤操作后的焦点
     state = undoSelection(state)
     expect(pick(sheetOf(state), 1)).toBeNull()
     expect(state.focus).toBe(1)
     state = undoSelection(state)
     expect(pick(sheetOf(state), 0)).toBeNull()
-    expect(state.focus).toBe(0) // 最早记录之前回到底线焦点
+    expect(state.focus).toBe(0) // 最早步骤发生前的焦点（第一题）
     expect(state.canUndo).toBe(false)
     expect(state.canRedo).toBe(true)
 
@@ -180,6 +190,75 @@ describe('undoSelection / redoSelection —— 逆序与原序恢复', () => {
   })
 })
 
+describe('recordBatch —— 批量覆盖是一个可撤销的原子步骤', () => {
+  it('一次撤销恢复覆盖前整张答卡（含此前已录答案），重做再次整体写入', () => {
+    let state = initHistory()
+    state = recordSelection(state, 0, 'A', 1)
+    state = recordSelection(state, 1, 'B', 2) // 覆盖前：1=A、2=B，其余空，焦点第 3 题
+    state = moveFocus(state, 6) // 写入前焦点停在第 7 题
+
+    const imported = fullSheet('C')
+    state = recordBatch(state, imported)
+    expect(sheetOf(state)).toEqual(imported)
+    expect(state.focus).toBe(6) // 焦点不被写入带走
+    expect(state.undoStack).toHaveLength(3) // 旧轨迹仍在，批量只追加一个步骤
+
+    // 撤销批量步骤：覆盖前的 A、B 与其余漏答一次性全部恢复
+    state = undoSelection(state)
+    expect(pick(sheetOf(state), 0)).toBe('A')
+    expect(pick(sheetOf(state), 1)).toBe('B')
+    expect(pick(sheetOf(state), 2)).toBeNull()
+    expect(pick(sheetOf(state), 19)).toBeNull()
+    expect(state.focus).toBe(6) // 焦点回到批量写入前的位置
+
+    // 重做：20 题再次整体写成 C，焦点回到写入后的位置
+    state = redoSelection(state)
+    expect(sheetOf(state)).toEqual(imported)
+    expect(state.focus).toBe(6)
+  })
+
+  it('批量步骤只记录真正发生变化的题目，撤销逐题还原', () => {
+    let state = initHistory()
+    state = recordSelection(state, 0, 'A', 1)
+
+    const imported = fullSheet('A') // 第 1 题已是 A，仅其余 19 题变化
+    state = recordBatch(state, imported)
+    const batchEntry = state.undoStack[state.undoStack.length - 1]
+    expect(batchEntry.changes).toHaveLength(19)
+    expect(batchEntry.changes.every((change) => change.index !== 0)).toBe(true)
+
+    state = undoSelection(state)
+    expect(pick(sheetOf(state), 0)).toBe('A') // 未变化的第 1 题不受影响
+    expect(pick(sheetOf(state), 1)).toBeNull()
+    expect(pick(sheetOf(state), 19)).toBeNull()
+  })
+
+  it('覆盖后清空重做分支，且批量之后的单题修改仍可继续撤销', () => {
+    let state = initHistory()
+    state = recordSelection(state, 0, 'A', 1)
+    state = undoSelection(state)
+    expect(state.canRedo).toBe(true)
+
+    state = recordBatch(state, fullSheet('D'))
+    expect(state.canRedo).toBe(false)
+    expect(state.redoStack).toEqual([])
+
+    state = recordSelection(state, 6, 'B', 7) // 批量后继续改单题
+    state = undoSelection(state)
+    expect(pick(sheetOf(state), 6)).toBe('D') // 先撤单题，回到批量写入后的整卡
+    state = undoSelection(state)
+    expect(pick(sheetOf(state), 6)).toBeNull() // 再撤批量步骤，回到覆盖前
+  })
+
+  it('与当前答卡完全相同或长度不符时不留痕', () => {
+    const state = initHistory(fullSheet('C'), 3)
+    expect(recordBatch(state, fullSheet('C'))).toBe(state)
+    expect(recordBatch(state, ['A', 'B'])).toBe(state)
+    expect(state.undoStack).toEqual([])
+    expect(state.focus).toBe(3)
+  })
+})
+
 describe('moveFocus —— 焦点移动不污染轨迹', () => {
   it('方向键式移动只改焦点、不留痕、不清空重做分支', () => {
     let state = initHistory()
@@ -205,16 +284,16 @@ describe('moveFocus —— 焦点移动不污染轨迹', () => {
     expect(state.focus).toBe(3)
   })
 
-  it('已有编辑后的焦点移动不改变底线焦点', () => {
+  it('已有编辑后的焦点移动不影响更早步骤的焦点恢复', () => {
     let state = initHistory()
     state = recordSelection(state, 0, 'A', 1)
     state = moveFocus(state, 8)
     state = undoSelection(state)
-    expect(state.focus).toBe(0) // 底线焦点仍是初始的第一题
+    expect(state.focus).toBe(0) // 该步骤发生前焦点仍是第一题
   })
 })
 
-describe('initHistory —— 跨轮清空与批量写入基线', () => {
+describe('跨轮清空', () => {
   it('第二轮重新初始化得到空轨迹，不含任何上一轮记录', () => {
     let first = initHistory()
     for (let i = 0; i < 5; i++) first = recordSelection(first, i, 'A', i + 1)
@@ -229,26 +308,5 @@ describe('initHistory —— 跨轮清空与批量写入基线', () => {
     expect(second.canRedo).toBe(false)
     expect(sheetOf(second).every((a) => a === null)).toBe(true)
     expect(second.focus).toBe(0)
-  })
-
-  it('批量整卡写入以新轨迹为基线：旧记录不可撤销，焦点保留在写入前位置', () => {
-    let state = initHistory()
-    state = recordSelection(state, 0, 'A', 1)
-    state = moveFocus(state, 6)
-
-    const imported = createEmptySheet().map(() => 'C' as Answer)
-    state = initHistory(imported, state.focus)
-    expect(state.canUndo).toBe(false)
-    expect(state.canRedo).toBe(false)
-    expect(state.undoStack).toEqual([])
-    expect(state.focus).toBe(6)
-    expect(state.baseFocus).toBe(6)
-    expect(sheetOf(state).every((a) => a === 'C')).toBe(true)
-
-    // 全新基线上的编辑仍可正常撤销/重做
-    state = recordSelection(state, 6, 'D', 7)
-    state = undoSelection(state)
-    expect(pick(sheetOf(state), 6)).toBe('C')
-    expect(state.focus).toBe(6)
   })
 })

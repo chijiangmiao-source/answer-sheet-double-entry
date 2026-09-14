@@ -5,6 +5,7 @@ import { parseBatchAnswers } from '../core/batchParse'
 import {
   initHistory,
   moveFocus,
+  recordBatch,
   recordSelection,
   redoSelection,
   undoSelection,
@@ -60,9 +61,9 @@ function toggleBatch() {
 function applyBatch() {
   if (!batchCheck.value.ok) return // 按钮已禁用，这里再兜一层，保证不合法绝不写入
   // 原子写入：一次性整体替换本轮答卡，不存在部分覆盖的中间态；
-  // 整卡替换等价于一条新的轨迹基线，写入前的单题轨迹随之作废，
+  // 作为轨迹中的一个原子步骤，一次撤销即可恢复覆盖前整张答卡（含此前已录答案），
   // 焦点保持在当前题目。复制一份可变副本，与冻结的解析结果隔离。
-  history.value = initHistory(batchCheck.value.sheet.slice(), currentIndex.value)
+  history.value = recordBatch(history.value, batchCheck.value.sheet.slice())
   batchDraft.value = ''
   batchOpen.value = false
 }
@@ -128,6 +129,9 @@ function onKeydown(event: KeyboardEvent) {
   }
 
   const key = event.key.toUpperCase()
+  // 带 Ctrl / Cmd 修饰键的字母（如 Ctrl+A、Cmd+C）是浏览器/系统快捷键，
+  // 绝不能当成作答填入当前题：直接忽略，答卡与轨迹都不变（撤销/重做组合键已在上面处理）。
+  if ((OPTIONS as readonly string[]).includes(key) && (event.ctrlKey || event.metaKey)) return
   if ((OPTIONS as readonly string[]).includes(key)) {
     event.preventDefault()
     selectOption(key as Option)
@@ -231,7 +235,7 @@ onMounted(() => {
 
         <div v-if="batchSheet.length > 0" class="batch__preview" data-testid="batch-preview">
           <p class="batch__summary">
-            已解析 {{ batchSheet.length }}/20 个选项，确认后一次性写入本轮答卡（现有答案与编辑轨迹将被整体覆盖）：
+            已解析 {{ batchSheet.length }}/20 个选项，确认后一次性写入本轮答卡（现有答案将被整体覆盖，可随时撤销恢复）：
           </p>
           <ol class="batch__list">
             <li v-for="(option, index) in batchSheet" :key="index" class="batch__item">

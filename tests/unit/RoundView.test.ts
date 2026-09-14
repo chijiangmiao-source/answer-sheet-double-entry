@@ -18,7 +18,7 @@ function press(wrapper: VueWrapper, key: string) {
 function pressWith(
   wrapper: VueWrapper,
   key: string,
-  modifiers: { ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean }
+  modifiers: { ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean; altKey?: boolean }
 ) {
   return wrapper.find('section.round').trigger('keydown', { key, ...modifiers })
 }
@@ -373,6 +373,47 @@ describe('RoundView 撤销 / 重做', () => {
     const events = wrapper.emitted('submit')
     expect(events).toBeDefined()
     expect(events![0][0]).toHaveLength(20)
+  })
+
+  it('Ctrl/Cmd 与选项字母的组合不会填入当前题，答卡保持不变', async () => {
+    const wrapper = mountRound()
+    await pressWith(wrapper, 'a', { ctrlKey: true })
+    await pressWith(wrapper, 'B', { metaKey: true })
+    await pressWith(wrapper, 'c', { ctrlKey: true, shiftKey: true })
+    await pressWith(wrapper, 'D', { metaKey: true, altKey: true })
+    expect(wrapper.findAll('.option--selected')).toHaveLength(0)
+    expect(wrapper.find('[data-testid="undo"]').attributes('disabled')).toBeDefined()
+    // 焦点仍停留在第 1 题，没有误触后移
+    expect(wrapper.find('.question--current').attributes('data-testid')).toBe('question-1')
+
+    // 排除修饰键后，普通字母作答仍正常生效
+    await press(wrapper, 'A')
+    expect(wrapper.find('[data-testid="q1-A"]').classes()).toContain('option--selected')
+  })
+
+  it('批量覆盖后撤销可恢复覆盖前已录答案，重做再次整体写入', async () => {
+    const wrapper = mountRound()
+    // 覆盖前已录入：第 1 题 A、第 2 题 B，焦点随作答停在第 3 题
+    await press(wrapper, 'A')
+    await press(wrapper, 'B')
+    await wrapper.find('[data-testid="batch-toggle"]').trigger('click')
+    await wrapper.find('[data-testid="batch-input"]').setValue(Array(20).fill('c').join(' '))
+    await wrapper.find('[data-testid="batch-apply"]').trigger('click')
+    expect(wrapper.findAll('.option--selected')).toHaveLength(20)
+    expect(wrapper.find('[data-testid="q1-C"]').classes()).toContain('option--selected')
+
+    // 一次撤销恢复覆盖前整卡：第 1、2 题回到 A、B，其余漏答，焦点回第 3 题
+    await undoByKey(wrapper)
+    expect(wrapper.find('[data-testid="q1-A"]').classes()).toContain('option--selected')
+    expect(wrapper.find('[data-testid="q2-B"]').classes()).toContain('option--selected')
+    expect(wrapper.find('[data-testid="q1-C"]').classes()).not.toContain('option--selected')
+    expect(wrapper.findAll('.option--selected')).toHaveLength(2)
+    expect(wrapper.find('.question--current').attributes('data-testid')).toBe('question-3')
+
+    // 重做：20 题再次整体写成 C
+    await redoByKey(wrapper, 'Z')
+    expect(wrapper.findAll('.option--selected')).toHaveLength(20)
+    expect(wrapper.find('[data-testid="q1-C"]').classes()).toContain('option--selected')
   })
 
   it('按钮禁用时快捷键也不改变答卡', async () => {

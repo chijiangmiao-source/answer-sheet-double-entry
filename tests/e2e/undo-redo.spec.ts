@@ -139,4 +139,51 @@ test.describe('撤销 / 重做', () => {
     await expect(rows).toHaveCount(1)
     await expect(page.getByTestId('diff-10').locator('td')).toHaveText(['第 10 题', 'A', 'B'])
   })
+
+  test('批量整卡覆盖后撤销恢复覆盖前答案；Ctrl/Cmd+字母不误填当前题', async ({ page }) => {
+    const round1 = await focusRound(page, 1)
+
+    // Ctrl / Cmd 与选项字母的组合是浏览器快捷键，不能当成作答
+    await page.keyboard.press('Control+a')
+    await page.keyboard.press('Control+c')
+    await expect(round1.locator('.option--selected')).toHaveCount(0)
+    await expect(round1.locator('.question--current')).toHaveAttribute(
+      'data-testid',
+      'question-1'
+    )
+    await expect(round1.getByTestId('undo')).toBeDisabled()
+
+    // 覆盖前先录两题：第 1 题 A、第 2 题 B
+    await pressKeys(page, ['A', 'B'])
+    await expect(round1.locator('[data-testid="q2-B"]')).toHaveClass(/option--selected/)
+
+    // 批量整卡写入 20 个 D
+    await page.getByTestId('batch-toggle').click()
+    await page.getByTestId('batch-input').fill(Array(20).fill('D').join(' '))
+    await page.getByTestId('batch-apply').click()
+    await expect(round1.locator('.option--selected')).toHaveCount(20)
+
+    // 一次撤销恢复覆盖前整张答卡：1=A、2=B，其余 18 题空，焦点回第 3 题
+    await round1.focus()
+    await page.keyboard.press('Control+z')
+    await expect(round1.locator('[data-testid="q1-A"]')).toHaveClass(/option--selected/)
+    await expect(round1.locator('[data-testid="q2-B"]')).toHaveClass(/option--selected/)
+    await expect(round1.locator('[data-testid="q1-D"]')).not.toHaveClass(/option--selected/)
+    await expect(round1.locator('.option--selected')).toHaveCount(2)
+    await expect(round1.locator('.question--current')).toHaveAttribute(
+      'data-testid',
+      'question-3'
+    )
+
+    // 重做再次整体写入 20 个 D
+    await page.keyboard.press('Control+Shift+Z')
+    await expect(round1.locator('.option--selected')).toHaveCount(20)
+    await expect(round1.locator('[data-testid="q1-D"]')).toHaveClass(/option--selected/)
+
+    // 恢复后的答卡可正常提交进入第二轮
+    await page.getByTestId('submit-round').click()
+    const round2 = page.getByRole('region', { name: '第 2 轮录入' })
+    await expect(round2).toBeVisible()
+    await expect(round2.locator('.option--selected')).toHaveCount(0)
+  })
 })
